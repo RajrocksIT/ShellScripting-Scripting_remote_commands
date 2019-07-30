@@ -1,0 +1,302 @@
+1) The first step for this project is to actually create a small internal network of three virtual machines. We're going to create an administration server and then two other servers that are going to act as the
+work horses.
+cd shellclass
+mkdir exercise_multinet
+cd exercise_multinet
+vagrant init jasonc/centos7
+hint: Make sure you are in exercise_multinet directory before typing the above command.
+hint: The above command places vagrantfile in exercise_multinet directory.
+hint:Lets edit the vagrant file.
+vim vagrantfile
+hint: Foll0wing changes were made in vagrantfile.
+Vagrant.configure(2) do |config|
+  config.vm.box = "jasonc/centos7"
+
+  config.vm.define "admin01" do |admin01|
+     admin01.vm.hostname = "admin01"
+     admin01.vm.network "private_network", ip: "10.9.8.13"
+  end
+
+  config.vm.define "server01" do |server01|
+     server01.vm.hostname = "server01"
+     server01.vm.network "private_network", ip: "10.9.8.14"
+  end
+
+  config.vm.define "server02" do |server02|
+     server02.vm.hostname = "server02"
+     server02.vm.network "private_network", ip: "10.9.8.15"
+  end
+end
+
+hint: Save the Vagrantfile file
+hint: Lets import the box into virtual box.
+hint: When you are working with a vagrant multi machine set up like this, when you run a command it runs that command against all the systems unless you specify which one of the virtual machines that you're working with.
+vagrant up
+hint: Above command is going to bring up all three of those systems.
+hint: After the above command, we should have three running virtual machines. Lets check with vagrant status.
+vagrant status
+hint: Lets connect to admin01
+vagrant ssh admin01
+hint: After the above command, the console is "[vagrant@admin01 ~]$"
+cd /vagrant
+
+
+
+
+2) Let's create script named run-everywhere.sh
+vi run-everywhere.sh
+hint: Lets type the following in run-everywhere.sh
+#!/bin/bash
+
+# A list of servers, one per line.
+SERVER_LIST='/vagrant/servers'
+
+# Options for the ssh command.
+SSH_OPTIONS='-o ConnectTimeout=2'
+
+usage() {
+   # Display the usage and exit.
+   echo "Usage: ${0} [-nsv] [-f file] COMMAND" >&2
+   echo 'Executes COMMAND as a single command on every server.' >&2
+   echo " -f FILE Use FILE for the list of servers. Default ${SERVER_LIST}." >&2
+   echo ' -n   Dry run mode. Display the COMMAND that would have been executed and exit.' >&2
+   echo ' -s   Execute the COMMAND using sudo on the remote server.' >&2
+   echo ' -v   Verbose mode. Displays the server name before executing COMMAND.' >&2
+   exit 1
+}
+
+# Make sure the script is not begin executed with superuser privileges.
+if [[ "${UID}" -eq 0 ]]
+then
+    echo 'Do not execute this script as a root. Use the -s option instead.' >&2
+    usage
+fi
+
+# Parse the options
+while getopts f:nsv OPTION
+do
+  case ${OPTION} in
+     f) SERVER_LIST="${OPTARG}" ;;
+     n) DRY_RUN='true' ;;
+     s) SUDO='sudo' ;;
+     v) VERBOSE='true' ;;
+     ?) usage ;;
+  esac
+done
+
+# Remove the options while leaving the remaining arguments.
+shift "$(( OPTIND - 1 ))"
+
+# If the user does not supply at least one argument, give them help.
+if [[ "${#}" -lt 1 ]]
+then
+   usage
+fi
+
+# Anything that remains on the command line is to be treated as a single command.
+COMMAND="${@}"
+
+# Make sure the SERVER_LIST file exists.
+if [[ ! -e "${SERVER_LIST}" ]]
+then
+   echo "Cannot open server list file ${SERVER_LIST}." >&2
+   exit 1
+fi
+
+# Lets set an exit status of 0 at the beginning and then check for any non-zero exit statuses from the ssh command as we execute them.
+# And then if there happens to be a non-zero exit status then overwrite our default exit status for the script and then exit with exit status.
+
+# Expect the best, prepare for the worst.
+EXIT_STATUS='0'
+
+# Loop through the SERVER_LIST
+for SERVER in $( cat ${SERVER_LIST} )
+do
+  if [[ "${VERBOSE}" = 'true' ]]
+  then
+      echo "${SERVER}"
+  fi
+
+  SSH_COMMAND="ssh ${SSH_OPTIONS} ${SERVER} ${SUDO} ${COMMAND}"
+
+  # If it is a dry run, dont execute anything, just echo it.
+  if [[ "${DRY_RUN}" = 'true' ]]
+  then
+    echo "DRY RUN: ${SSH_COMMAND}"
+  else
+    ${SSH_COMMAND}
+    SSH_EXIT_STATUS="${?}"
+    
+    # Capture any non zero exit status from the SSH_COMMAND and report to the user.
+     if [[ "${SSH_EXIT_STATUS}" -ne 0 ]]
+     then 
+         EXIT_STATUS="${SSH_EXIT_STATUS}"
+         echo "Execution on ${SERVER} failed." >&2
+         # We chose not to exit here because we want to continue executing that command on all the servers that are up or available or
+         # whatever without immediately exiting. say if we have 100 servers in the list, we dont want to exit jus because 3rd server failed.
+         # you can look at the failed one manually later.
+     fi
+  fi
+done
+
+exit ${EXIT_STATUS}
+
+Hint: Save run-everywhere.sh after typing the above text.
+ls -l
+hint: We see that disable-local-user.sh has rwx rwx rwx permissions by default as this is windows environment.
+hint: If it was linux/mac, then there was no execute permission for anyone. The we would have done the below command.
+chmod 755 run-everywhere.sh
+hint: Please note that default permissions which you want to keep on your shell scripts is 755. R = 4, w = 2 and X = 1
+
+
+
+
+3) Lets configure /etc/hosts file and  configure ssh authentication.
+echo '10.9.8.14 server01' | sudo tee -a /etc/hosts
+echo '10.9.8.15 server02' | sudo tee -a /etc/hosts
+cat /etc/hosts
+hint: Above command displays server01 and server02 in last 2 rows.
+hint: Lets try to ping them by name
+ping -c 1 server01
+ping -c 1 server02
+hint: Above 2 commands ran successfully.
+Lets configure ssh authentication.
+ssh-keygen
+hint: press enter without typing anything for "Enter file in which to save the key (/home/vagrant/.ssh/id_rsa):"
+hint: press enter without typing anything for "Enter passphrase (empty for no passphrase):"
+hint: press enter without typing anything for "Enter same passphrase again:"
+hint: Above 3 steps will allow us to do ssh without being prompted for a password every time we want to connect to a server.
+hint: After the above 3 steps, the public key is generated.
+hint: So the next step is to put the public key on the remote systems and there's a handy command that will help you do that.
+ssh-copy-id server01
+ssh-copy-id server02
+ssh server01 hostname
+hint: Above commad displays "server01"
+ssh server02 hostname
+hint: Above commad displays "server02"
+
+
+4) Lets  create a list of default servers that we coded for in our script.
+echo 'server01' > servers
+echo 'server02' >> servers
+cat servers
+hint: Above command displays "server01"    "server02"
+
+5) Lets test the script run-everywhere.sh
+hint: let's test to see if our check about whether or not it was run with root privileges works
+sudo ./run-everywhere.sh
+hint: Above command displays as:
+"Do not execute this script as a root. Use the -s option instead.
+Usage: ./run-everywhere.sh [-nsv] [-f file] COMMAND
+Executes COMMAND as a single command on every server.
+ -f FILE Use FILE for the list of servers. Default /vagrant/servers.
+ -n   Dry run mode. Display the COMMAND that would have been executed and exit.
+ -s   Execute the COMMAND using sudo on the remote server.
+ -v   Verbose mode. Displays the server name before executing COMMAND."
+
+
+hint: Now let's make sure the script displays a usage message if we don't supply a command to execute on the list of servers.
+./run-everywhere.sh
+hint: Above command displays as:
+"Usage: ./run-everywhere.sh [-nsv] [-f file] COMMAND
+Executes COMMAND as a single command on every server.
+ -f FILE Use FILE for the list of servers. Default /vagrant/servers.
+ -n   Dry run mode. Display the COMMAND that would have been executed and exit.
+ -s   Execute the COMMAND using sudo on the remote server.
+ -v   Verbose mode. Displays the server name before executing COMMAND."
+
+
+hint: Now let's try our script with an invalid option.
+./run-everywhere.sh -x hostname
+hint: Above command displays as:
+"./run-everywhere.sh: illegal option -- x
+Usage: ./run-everywhere.sh [-nsv] [-f file] COMMAND
+Executes COMMAND as a single command on every server.
+ -f FILE Use FILE for the list of servers. Default /vagrant/servers.
+ -n   Dry run mode. Display the COMMAND that would have been executed and exit.
+ -s   Execute the COMMAND using sudo on the remote server.
+ -v   Verbose mode. Displays the server name before executing COMMAND."
+
+
+hint: let's execute this script the way it's supposed to be.
+./run-everywhere.sh hostname
+hint: Above command displays "server01"    "server02"
+
+
+hint: let's execute the script using the dry run option.
+./run-everywhere.sh -n hostname
+hint: Output of above command is:
+"DRY RUN: ssh -o ConnectTimeout=2 server01  hostname
+DRY RUN: ssh -o ConnectTimeout=2 server02  hostname"
+
+
+hint: Lets use "-v"
+./run-everywhere.sh -v uptime
+hint: Output of above command is:
+"server01
+ 21:32:06 up  1:05,  0 users,  load average: 0.00, 0.01, 0.05
+server02
+ 21:32:07 up  1:04,  0 users,  load average: 0.06, 0.03, 0.05"
+
+hint: Lets try to combine "-n" and "-s" options.
+./run-everywhere.sh -ns id
+hint: Output of above command is:
+"DRY RUN: ssh -o ConnectTimeout=2 server01 sudo id
+DRY RUN: ssh -o ConnectTimeout=2 server02 sudo id"
+
+hint: Lets run the "-v" with id command
+./run-everywhere.sh -sv id
+hint: Output of above command is:
+"server01
+uid=0(root) gid=0(root) groups=0(root)
+server02
+uid=0(root) gid=0(root) groups=0(root)"
+
+
+hint: Lets create a little mini server here.
+echo server01 > test
+cat test
+./run-everywhere.sh -f test hostname
+hint: Output of above command is server01
+hint: Lets test the script with invalid data
+./run-everywhere.sh -f /path/to/nowhere hostname
+hint: Output of above command is "Cannot open server list file /path/to/nowhere."
+hint: let's quickly create a test1 user account on server01 and server02. In other words, lets create on every server listed in file containing servers name.
+./run-everywhere.sh -s useradd test1
+hint: How do we know if the above command worked.
+./run-everywhere.sh id test1
+hint: Above command displays:
+"uid=1001(test1) gid=1002(test1) groups=1002(test1)
+uid=1001(test1) gid=1002(test1) groups=1002(test1)"
+
+hint: Now let's say you want to create a test2 user account with a comment of test2 on all the servers.
+hint: Letys first do a dry run option.
+./run-everywhere.sh -ns 'useradd -c "Test Two" test2'
+hint: Output of above command is follows:
+"DRY RUN: ssh -o ConnectTimeout=2 server01 sudo useradd -c "Test Two" test2
+DRY RUN: ssh -o ConnectTimeout=2 server02 sudo useradd -c "Test Two" test2"
+
+hint: Now lets try the above command with out dry run option.
+./run-everywhere.sh -s 'useradd -c "Test Two" test2'
+hint: Lets see if test2 useraccount was created or not.
+./run-everywhere.sh id test2
+hint: Above command displays:
+"uid=1002(test2) gid=1003(test2) groups=1003(test2)
+uid=1002(test2) gid=1003(test2) groups=1003(test2)"
+
+hint: We can run the below commands without any hesitation.
+./run-everywhere.sh -v id test2
+./run-everywhere.sh -v tail -2 /etc/passwd
+
+
+
+
+
+
+
+
+
+
+        
+
+
